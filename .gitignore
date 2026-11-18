@@ -1,0 +1,4 @@
+/vendor/
+hasil/
+*.html
+.DS_Store

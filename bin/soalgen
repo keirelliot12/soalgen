@@ -1,0 +1,83 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/*
+ * SoalGen CLI v0.1
+ *
+ *   soalgen build <file.md> [--seed=42] [--paket=A] [--sekolah="..."] [--out=dir]
+ *
+ * Reads a Markdown question file, shuffles it deterministically, and writes
+ * two print-ready HTML files: the exam sheet and the separate answer key.
+ */
+
+$autoload = __DIR__ . '/../vendor/autoload.php';
+if (!file_exists($autoload)) {
+    fwrite(STDERR, "Jalankan 'composer install' dulu.\n");
+    exit(1);
+}
+require $autoload;
+
+use SoalGen\Parser;
+use SoalGen\Renderer;
+use SoalGen\Shuffler;
+
+$args = $argv;
+array_shift($args);
+
+if (count($args) < 2 || $args[0] !== 'build') {
+    fwrite(STDERR, "Pakai: soalgen build <file.md> [--seed=42] [--paket=A] [--sekolah=\"...\"] [--out=dir]\n");
+    exit(1);
+}
+
+$input = $args[1];
+$options = ['seed' => 42, 'paket' => 'A', 'sekolah' => '', 'out' => '.'];
+foreach (array_slice($args, 2) as $arg) {
+    if (str_starts_with($arg, '--seed=')) {
+        $options['seed'] = (int) substr($arg, 7);
+    } elseif (str_starts_with($arg, '--paket=')) {
+        $options['paket'] = strtoupper(substr($arg, 8));
+    } elseif (str_starts_with($arg, '--sekolah=')) {
+        $options['sekolah'] = substr($arg, 10);
+    } elseif (str_starts_with($arg, '--out=')) {
+        $options['out'] = substr($arg, 6);
+    } else {
+        fwrite(STDERR, "Opsi tidak dikenal: {$arg}\n");
+        exit(1);
+    }
+}
+
+if (!is_file($input)) {
+    fwrite(STDERR, "File tidak ditemukan: {$input}\n");
+    exit(1);
+}
+
+/** @var \SoalGen\Exam $exam */
+[$exam, $warnings] = (new Parser())->parse((string) file_get_contents($input));
+foreach ($warnings as $warning) {
+    fwrite(STDERR, "Peringatan: {$warning}\n");
+}
+
+if (count($exam->questions) === 0) {
+    fwrite(STDERR, "Tidak ada soal valid di file tersebut.\n");
+    exit(1);
+}
+
+$questions = Shuffler::shuffle($exam->questions, $options['seed']);
+$renderer = new Renderer();
+
+$paket = preg_replace('/[^A-Z0-9]/', '', $options['paket']);
+$paket = $paket === '' ? 'A' : $paket;
+$outDir = rtrim($options['out'], '/');
+if (!is_dir($outDir) && !mkdir($outDir, 0777, true)) {
+    fwrite(STDERR, "Gagal membuat folder: {$outDir}\n");
+    exit(1);
+}
+
+$soalFile = "{$outDir}/soal-paket-{$paket}.html";
+$kunciFile = "{$outDir}/kunci-paket-{$paket}.html";
+file_put_contents($soalFile, $renderer->renderExam($exam->title, $paket, $options['sekolah'], $questions));
+file_put_contents($kunciFile, $renderer->renderAnswerKey($exam->title, $paket, $questions));
+
+echo 'OK: ' . count($questions) . " soal -> {$soalFile}, {$kunciFile} (seed {$options['seed']})\n";
